@@ -19,6 +19,8 @@ Vue 3D › barre latérale (N) › onglet **Cryptext** › **Créer / reconstrui
 | Panneau | Réglages |
 |---|---|
 | Cryptext | nombre final, police (vide = Cryptext25 fournie) |
+| Position des caractères | espacement global et décalage X / Y de chaque caractère du nombre (ex. coller le 1 et le 0 pour former un « d » une fois retourné) ; boutons « Avant le pivot » et « Voir le mot » |
+| Zone ronde (hélice) | pour une hélice holographique : le nuage remplit le disque inscrit dans l'image, chaque chiffre s'éteint avant de toucher le bord, et le nombre est réduit si besoin pour tenir dans le cercle pendant tout le pivot ; rayon utile, fondu au bord. Un cercle guide (non rendu) s'affiche dans la vue caméra |
 | Nuage | quantité de chiffres, graine, tailles, débord, profondeur avant/arrière, largeur du nombre, dégagement |
 | Apparition | début, étalement, durée du fondu depuis le noir, profondeur d'arrivée |
 | Flottement | amplitude, rotation, vitesse, échelle du bruit, instant d'immobilité, durée de l'immobilisation, inclinaison au repos |

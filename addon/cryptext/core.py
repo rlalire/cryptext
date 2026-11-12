@@ -129,7 +129,14 @@ PANELS = [
         ("Durée pivot", 'FLOAT', 3.0, 0.01, 60.0, 'TIME_ABSOLUTE'),
         ("Mode pivot", 'INT', 0, 0, 2, 'NONE'),
     ]),
+    ("Cercle", [
+        ("Rayon utile", 'FLOAT', 0.97, 0.1, 1.5, 'FACTOR'),
+        ("Fondu au bord", 'FLOAT', 0.14, 0.001, 1.0, 'FACTOR'),
+        ("Zone ronde", 'BOOL', True, 0, 1, 'NONE'),
+        ("Demi-champ", 'FLOAT', 0.36, 0.01, 10.0, 'NONE'),
+    ]),
 ]
+HIDDEN = {"Zone ronde", "Demi-champ", "Rayon utile"}      # pilotés par l'add-on, pas affichés dans les panneaux de timing
 HOLD_AFTER = 4.0          # secondes gardées après le pivot pour la durée de la scène
 PIVOT_MODES = ("Axe X (lecture retournée)", "Axe X + axe vertical", "Dans le plan de l'image")
 
@@ -145,9 +152,11 @@ def build_tree(glyph_coll):
     for pname, items in PANELS:
         panel = itf.new_panel(pname)
         for name, typ, dflt, mn, mx, sub in items:
-            st = 'NodeSocketFloat' if typ == 'FLOAT' else 'NodeSocketInt'
+            st = {'FLOAT': 'NodeSocketFloat', 'INT': 'NodeSocketInt', 'BOOL': 'NodeSocketBool'}[typ]
             s = itf.new_socket(name, in_out='INPUT', socket_type=st, parent=panel)
-            s.default_value, s.min_value, s.max_value = dflt, mn, mx
+            s.default_value = dflt
+            if typ != 'BOOL':
+                s.min_value, s.max_value = mn, mx
             if typ == 'FLOAT' and sub != 'NONE':
                 s.subtype = sub
 
@@ -208,6 +217,18 @@ def build_tree(glyph_coll):
     pos = b.v('ADD', pos, rep_off)
     rest = b.vs(tilt, b.m('MULTIPLY', rad(I("Inclinaison au repos")), cloud))
     rot = b.v('ADD', b.v('ADD', rest, float_rot), b.v('ADD', ag_rot, rep_rot))
+
+    # --- zone ronde (hélice holographique) : tout s'éteint avant de toucher le bord du cercle inscrit
+    sep = b.node('ShaderNodeSeparateXYZ', {'Vector': pos})
+    persp = b.m('MULTIPLY', b.m('MAXIMUM', b.m('ADD', b.out(sep, 'Y'), CAM_DIST), 0.01), I("Demi-champ"))
+    ln = b.node('ShaderNodeVectorMath', operation='LENGTH')
+    b.set(ln.inputs[0], b.combine(x=b.out(sep, 'X'), z=b.out(sep, 'Z')))
+    r_scr = b.m('DIVIDE', b.out(ln, 'Value'), persp)
+    ext = b.m('DIVIDE', b.m('MULTIPLY', b.attr("taille", 'FLOAT'), b.m('MULTIPLY', sc, 0.55)), persp)
+    edge = b.remap(b.m('ADD', r_scr, ext), b.m('SUBTRACT', I("Rayon utile"), I("Fondu au bord")), I("Rayon utile"),
+                   1.0, 0.0, interp='SMOOTHSTEP')
+    use = b.m('MULTIPLY', I("Zone ronde"), 1.0)
+    fade = b.m('MULTIPLY', fade, b.m('ADD', b.m('MULTIPLY', use, b.m('SUBTRACT', edge, 1.0)), 1.0))
 
     pts = b.out(b.node('GeometryNodeMeshToPoints', {'Mesh': I("Geometry")}))
     pts = b.out(b.node('GeometryNodeStoreNamedAttribute', {'Geometry': pts, 'Name': "fondu", 'Value': fade},
@@ -371,11 +392,12 @@ def layout_number(font, number, extrude, bevel):
     for k in range(len(idx)):
         vs = {v for p in me.polygons if p.material_index == k + 1 for v in p.vertices}
         pts = co[list(vs)] if vs else np.zeros((1, 3))
-        res.append((pts.min(0) + pts.max(0)) / 2)
+        res.append(((pts.min(0) + pts.max(0)) / 2, (pts.max(0) - pts.min(0)) / 2))
     lo, hi = co.min(0), co.max(0)
     bpy.data.meshes.remove(me)
     mid = (lo + hi) / 2
-    out = [(number[i], float(r[0] - mid[0]), float(r[1] - mid[1])) for i, r in zip(idx, res)]
+    out = [(number[i], float(c[0] - mid[0]), float(c[1] - mid[1]), float(e[0]), float(e[1]))
+           for i, (c, e) in zip(idx, res)]
     return out, float(hi[0] - lo[0]), float(hi[1] - lo[1])
 
 
@@ -393,6 +415,29 @@ def build_points(st, centers_unused=None, font=None):
     gidx = {c: i for i, c in enumerate(chars)}
     lay, w, h = layout_number(font, st.number, st.extrude, st.bevel)
     nsize = st.number_width * 2 * hw / max(w, 1e-3)
+    # réglages par caractère (décalages) + espacement, puis recentrage
+    offs = list(st.chars)
+    n_ch = len(lay)
+    pl = []
+    for k, (c, x, z, ex, ez) in enumerate(lay):
+        ox, oz = (offs[k].x, offs[k].z) if k < len(offs) else (0.0, 0.0)
+        pl.append([c, x + ox + (k - (n_ch - 1) / 2) * st.spacing, z + oz, ex, ez])
+    if pl:
+        a = np.array([[q[1] - q[3], q[1] + q[3], q[2] - q[4], q[2] + q[4]] for q in pl])
+        cx, cz = (a[:, 0].min() + a[:, 1].max()) / 2, (a[:, 2].min() + a[:, 3].max()) / 2
+        for q in pl:
+            q[1] -= cx; q[2] -= cz
+        w, h = a[:, 1].max() - a[:, 0].min(), a[:, 3].max() - a[:, 2].min()
+    lay = [(q[0], q[1], q[2]) for q in pl]
+    # zone ronde : le nombre (et sa rotation) doit tenir dans le cercle, perspective comprise
+    limited = False
+    if st.circle and pl:
+        rmax = max(math.hypot(abs(q[1]) + q[3], abs(q[2]) + q[4]) for q in pl)
+        # pire cas : un coin bascule vers la caméra d'une distance égale à son rayon
+        R = st.circle_radius * hw * 0.98
+        lim = R * CAM_DIST / (CAM_DIST + R) / rmax
+        if nsize > lim:
+            nsize, limited = lim, True
 
     rng = np.random.default_rng(st.seed)
     # boîte du nombre à l'écran (pour le dégager des chiffres trop proches en profondeur)
@@ -407,7 +452,11 @@ def build_points(st, centers_unused=None, font=None):
     for i in range(n):
         y = rng.uniform(y_lo, y_hi, k_cand)
         sc = (CAM_DIST + y) / CAM_DIST * hw * st.spread
-        sx, sz = rng.uniform(-1, 1, k_cand), rng.uniform(-1, 1, k_cand)
+        if st.circle:                            # disque : le nuage épouse le cercle
+            rr, aa = np.sqrt(rng.random(k_cand)) * st.circle_radius, rng.uniform(0, 2 * np.pi, k_cand)
+            sx, sz = rr * np.cos(aa), rr * np.sin(aa)
+        else:
+            sx, sz = rng.uniform(-1, 1, k_cand), rng.uniform(-1, 1, k_cand)
         cand = np.stack([sx * sc, y, sz * sc], 1)
         ok = ~((np.abs(sx * sc * CAM_DIST / (CAM_DIST + y)) < bx) &
                (np.abs(sz * sc * CAM_DIST / (CAM_DIST + y)) < bz) & (np.abs(y) < st.clearance + 0.3))
@@ -450,6 +499,7 @@ def build_points(st, centers_unused=None, font=None):
     r_app = np.r_[r_app, rng.random(nf) * 0.5 + 0.5]       # le nombre n'arrive pas en premier
     r_rep = np.r_[r_rep, np.zeros(nf)]
     graine = rng.uniform(0, 100, m + nf)
+    st["_limited"] = limited
 
     ob = bpy.data.objects.get(OBJ)
     me = bpy.data.meshes.new("Cryptext points")
@@ -590,6 +640,33 @@ def set_input(md, name, value):
         md[prop[2:-2]] = value
 
 
+def sync_circle(st):
+    """Entrées cachées du réseau + cercle guide (non rendu) dans la vue caméra."""
+    cam = bpy.data.objects.get("Cryptext caméra")
+    md = get_modifier()
+    if md and cam:
+        set_input(md, "Zone ronde", bool(st.circle))
+        set_input(md, "Demi-champ", (cam.data.sensor_width / 2) / cam.data.lens)
+        set_input(md, "Rayon utile", st.circle_radius)
+    guide = bpy.data.objects.get("Cryptext cercle (guide)")
+    if cam and not guide:
+        me = bpy.data.meshes.new("Cryptext cercle (guide)")
+        k = 128
+        me.from_pydata([(math.cos(2 * math.pi * i / k), math.sin(2 * math.pi * i / k), 0) for i in range(k)],
+                       [(i, (i + 1) % k) for i in range(k)], [])
+        guide = bpy.data.objects.new("Cryptext cercle (guide)", me)
+        bpy.context.scene.collection.objects.link(guide)
+        guide.parent = cam
+        guide.hide_render = True
+        guide.hide_select = True
+        guide.display_type = 'WIRE'
+    if guide and cam:
+        r = (cam.data.sensor_width / 2) / cam.data.lens * 0.5
+        guide.location = (0, 0, -0.5)
+        guide.scale = (r, r, r)
+        guide.hide_viewport = not st.circle
+
+
 def get_object():
     return bpy.data.objects.get(OBJ)
 
@@ -605,6 +682,7 @@ def get_modifier():
 
 def rebuild_points(st):
     build_points(st)
+    sync_circle(st)
 
 
 def rebuild_glyphs(st):
@@ -646,6 +724,7 @@ def create_scene(st):
     for it in tree.interface.items_tree:
         if it.item_type == 'SOCKET' and it.name in old:
             set_input(md, it.name, old[it.name])
+    sync_circle(st)
     fit_frame_range(scene, md)
     scene.frame_set(scene.frame_current)
     return ob

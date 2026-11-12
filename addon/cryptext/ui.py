@@ -1,6 +1,7 @@
 # Cryptext : réglages, opérateurs et panneau (barre latérale N › Cryptext).
 import bpy
-from bpy.props import (StringProperty, IntProperty, FloatProperty, EnumProperty, BoolProperty, PointerProperty)
+from bpy.props import (StringProperty, IntProperty, FloatProperty, EnumProperty, BoolProperty, PointerProperty,
+                       CollectionProperty)
 from . import core
 
 
@@ -9,9 +10,38 @@ def _points(self, ctx):
         core.rebuild_points(self)
 
 
+def sync_chars(st):
+    """Une ligne de réglage par caractère du nombre (garde les décalages des caractères inchangés)."""
+    want = [c for c in st.number if not c.isspace()]
+    old = [(it.char, it.x, it.z) for it in st.chars]
+    if [o[0] for o in old] == want:
+        return
+    st.chars.clear()
+    for k, c in enumerate(want):
+        it = st.chars.add()
+        it.char = c
+        if k < len(old) and old[k][0] == c:
+            it["x"], it["z"] = old[k][1], old[k][2]
+
+
 def _glyphs(self, ctx):
+    sync_chars(self)
     if core.get_object():
         core.rebuild_glyphs(self)
+
+
+def _char(self, ctx):
+    st = ctx.scene.cryptext
+    if core.get_object():
+        core.rebuild_points(st)
+
+
+class CryptextChar(bpy.types.PropertyGroup):
+    char: StringProperty(name="Caractère")
+    x: FloatProperty(name="X", default=0.0, step=1, precision=3, update=_char,
+                     description="Décalage horizontal (en hauteur de lettre) ; négatif = vers la gauche")
+    z: FloatProperty(name="Y", default=0.0, step=1, precision=3, update=_char,
+                     description="Décalage vertical (en hauteur de lettre)")
 
 
 def _material(self, ctx):
@@ -37,7 +67,7 @@ class CryptextSettings(bpy.types.PropertyGroup):
     count: IntProperty(name="Chiffres", default=500, min=0, max=20000, update=_points,
                        description="Nombre de chiffres dans le nuage")
     seed: IntProperty(name="Graine", default=7, min=0, update=_points)
-    spread: FloatProperty(name="Débord", default=1.15, min=0.3, max=3.0, update=_points,
+    spread: FloatProperty(name="Débord", default=1.0, min=0.3, max=3.0, update=_points,
                           description="Largeur du nuage par rapport au cadre")
     depth_front: FloatProperty(name="Profondeur avant", default=5.0, min=0.0, max=11.0, unit='LENGTH',
                                update=_points, description="Jusqu'où les chiffres s'approchent de la caméra")
@@ -57,6 +87,13 @@ class CryptextSettings(bpy.types.PropertyGroup):
                                                   ('WHITE', "Blanc", "")), default='GOLD', update=_material_preset)
     roughness: FloatProperty(name="Rugosité", default=0.18, min=0.0, max=1.0, subtype='FACTOR', update=_material)
     use_dof: BoolProperty(name="Profondeur de champ", default=True, update=_dof)
+    chars: CollectionProperty(type=CryptextChar)
+    spacing: FloatProperty(name="Espacement", default=0.0, min=-1.0, max=2.0, step=1, precision=3, update=_points,
+                           description="Espace ajouté entre les caractères du nombre (en hauteur de lettre)")
+    circle: BoolProperty(name="Zone ronde", default=True, update=_points,
+                         description="Hélice holographique : rien ne touche le bord du cercle inscrit dans l'image")
+    circle_radius: FloatProperty(name="Rayon utile", default=0.97, min=0.3, max=1.0, subtype='FACTOR',
+                                 update=_points, description="Rayon du cercle utile (1 = bord du cercle de 1024 px)")
 
 
 class CRYPTEXT_OT_create(bpy.types.Operator):
@@ -66,6 +103,7 @@ class CRYPTEXT_OT_create(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, ctx):
+        sync_chars(ctx.scene.cryptext)
         core.create_scene(ctx.scene.cryptext)
         return {'FINISHED'}
 
@@ -94,6 +132,33 @@ class CRYPTEXT_OT_jump(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CRYPTEXT_OT_reset_chars(bpy.types.Operator):
+    bl_idname = "cryptext.reset_chars"
+    bl_label = "Remettre à zéro"
+    bl_description = "Annule les décalages et l'espacement du nombre"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, ctx):
+        st = ctx.scene.cryptext
+        for it in st.chars:
+            it["x"] = it["z"] = 0.0
+        st.spacing = 0.0
+        return {'FINISHED'}
+
+
+class CRYPTEXT_OT_jump_end(bpy.types.Operator):
+    bl_idname = "cryptext.jump_end"
+    bl_label = "Voir le mot"
+    bl_description = "Place la tête de lecture après le pivot"
+    bl_options = {'REGISTER'}
+
+    def execute(self, ctx):
+        md, sc = core.get_modifier(), ctx.scene
+        t = core.get_input(md, "Début pivot") + core.get_input(md, "Durée pivot") + 0.5
+        sc.frame_set(int(round(t * sc.render.fps / sc.render.fps_base)) + 1)
+        return {'FINISHED'}
+
+
 class CRYPTEXT_PT_main(bpy.types.Panel):
     bl_space_type, bl_region_type, bl_category = 'VIEW_3D', 'UI', "Cryptext"
     bl_label = "Cryptext"
@@ -115,6 +180,43 @@ class _Sub:
     @classmethod
     def poll(cls, ctx):
         return core.get_object() is not None
+
+
+class CRYPTEXT_PT_number(_Sub, bpy.types.Panel):
+    bl_label = "Position des caractères"
+
+    def draw(self, ctx):
+        st, lay = ctx.scene.cryptext, self.layout
+        row = lay.row(align=True)
+        op = row.operator("cryptext.jump", text="Avant le pivot", icon='TIME'); op.socket = "Début pivot"
+        row.operator("cryptext.jump_end", text="Voir le mot", icon='FILE_REFRESH')
+        lay.prop(st, "spacing")
+        col = lay.column(align=True)
+        for it in st.chars:
+            r = col.row(align=True)
+            r.label(text=it.char)
+            r.prop(it, "x")
+            r.prop(it, "z")
+        lay.operator("cryptext.reset_chars", icon='LOOP_BACK')
+
+
+class CRYPTEXT_PT_circle(_Sub, bpy.types.Panel):
+    bl_label = "Zone ronde (hélice)"
+
+    def draw_header(self, ctx):
+        self.layout.prop(ctx.scene.cryptext, "circle", text="")
+
+    def draw(self, ctx):
+        st, lay = ctx.scene.cryptext, self.layout
+        lay.use_property_split = True
+        lay.active = st.circle
+        lay.prop(st, "circle_radius")
+        md = core.get_modifier()
+        if md:
+            owner, prop = core.input_ref(md, "Fondu au bord")
+            lay.prop(owner, prop, text="Fondu au bord")
+        if st.get("_limited"):
+            lay.label(text="Nombre réduit pour tenir dans le cercle", icon='INFO')
 
 
 class CRYPTEXT_PT_cloud(_Sub, bpy.types.Panel):
@@ -156,6 +258,8 @@ class CRYPTEXT_PT_look(_Sub, bpy.types.Panel):
 def _draw_inputs(lay, md, panel_name, jump=None):
     tree = md.node_group
     for name, typ, *_ in dict(core.PANELS)[panel_name]:
+        if name in core.HIDDEN:
+            continue
         it = tree.interface.items_tree.get(name)
         if not it:
             continue
@@ -199,7 +303,8 @@ class CRYPTEXT_PT_timeline(_Sub, bpy.types.Panel):
         lay.operator("cryptext.fit_range", icon='TIME')
 
 
-CLASSES = [CryptextSettings, CRYPTEXT_OT_create, CRYPTEXT_OT_fit, CRYPTEXT_OT_jump, CRYPTEXT_PT_main,
+CLASSES = [CryptextChar, CryptextSettings, CRYPTEXT_OT_create, CRYPTEXT_OT_fit, CRYPTEXT_OT_jump,
+           CRYPTEXT_OT_reset_chars, CRYPTEXT_OT_jump_end, CRYPTEXT_PT_main, CRYPTEXT_PT_number, CRYPTEXT_PT_circle,
            CRYPTEXT_PT_cloud, *TIMING, CRYPTEXT_PT_look, CRYPTEXT_PT_timeline]
 
 

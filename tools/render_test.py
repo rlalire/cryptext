@@ -12,7 +12,11 @@ sc = bpy.context.scene
 for ob in list(bpy.data.objects):
     bpy.data.objects.remove(ob)
 core = cryptext.core
-core.create_scene(sc.cryptext)
+bpy.ops.cryptext.create()
+for spec in os.environ.get("CRYPTEXT_OFFSETS", "").split(";"):   # ex. "1:-0.08:0" = 2e caractère
+    if spec:
+        k, x, z = spec.split(":")
+        sc.cryptext.chars[int(k)].x, sc.cryptext.chars[int(k)].z = float(x), float(z)
 sc.eevee.taa_render_samples = samples
 if os.environ.get("CRYPTEXT_CYCLES"):          # machine sans GPU : rendu Cycles sur CPU
     sc.render.engine = 'CYCLES'
