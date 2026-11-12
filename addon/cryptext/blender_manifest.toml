@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+
+id = "cryptext"
+version = "0.1.0"
+name = "Cryptext"
+tagline = "Nuage de chiffres 3D qui révèle un nombre, puis un mot en pivotant"
+maintainer = "Romain Lalire"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Geometry Nodes", "Animation"]
+
+[permissions]
+files = "Lecture du fichier de police choisi"
