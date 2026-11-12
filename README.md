@@ -37,9 +37,9 @@ Timing par défaut (25 i/s) : apparition 0–20 s, immobile à 30 s, agitation �
 
 ### Modes de pivot
 
-- **0 · Axe X (lecture retournée)** : bascule sur l'axe horizontal. Une rotation de 180° sur X seule donnerait un reflet vertical ; l'add-on compense le reflet à l'instant où les chiffres sont vus par la tranche (invisible), pour finir retourné de 180° dans le plan, donc lisible (`gold`).
-- **1 · Axe X + axe vertical** : double rotation 3D réelle, arrive au même résultat.
-- **2 · Dans le plan de l'image** : rotation en roue.
+- **0 · Axe Y, sens horaire** (par défaut) : l'axe Y est l'axe de visée de la caméra. Le nombre tourne de 180° dans le plan de l'image et se lit retourné (`10106` → `gold`).
+- **1 · Axe Y, sens antihoraire** : même chose dans l'autre sens.
+- **2 · Bascule 3D (axes X + Z)** : double rotation en profondeur, qui arrive au même résultat.
 
 ## Fonctionnement
 

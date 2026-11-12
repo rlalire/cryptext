@@ -138,7 +138,7 @@ PANELS = [
 ]
 HIDDEN = {"Zone ronde", "Demi-champ", "Rayon utile"}      # pilotés par l'add-on, pas affichés dans les panneaux de timing
 HOLD_AFTER = 4.0          # secondes gardées après le pivot pour la durée de la scène
-PIVOT_MODES = ("Axe X (lecture retournée)", "Axe X + axe vertical", "Dans le plan de l'image")
+PIVOT_MODES = ("Axe Y, sens horaire", "Axe Y, sens antihoraire", "Bascule 3D (axes X + Z)")
 
 
 def build_tree(glyph_coll):
@@ -247,12 +247,10 @@ def build_tree(glyph_coll):
     # --- pivot du nombre final autour de son centre (origine)
     th = b.m('MULTIPLY', b.remap(t, I("Début pivot"), b.m('ADD', I("Début pivot"), I("Durée pivot")),
                                  interp='SMOOTHERSTEP'), math.pi)
-    past = b.m('GREATER_THAN', th, math.pi / 2)
-    th_fold = b.m('SUBTRACT', th, b.m('MULTIPLY', past, b.m('SUBTRACT', b.m('MULTIPLY', th, 2.0), math.pi)))
+    # axe Y = axe de visée de la caméra : 180° dans le plan de l'image, le nombre se lit retourné
     ident = b.euler((0.0, 0.0, 0.0))
-    first = [b.euler(b.combine(x=th_fold)), b.euler(b.combine(x=th)), ident]
-    second = [b.euler(b.combine(y=b.m('MULTIPLY', past, math.pi))), b.euler(b.combine(z=th)),
-              b.euler(b.combine(y=th))]
+    first = [ident, ident, b.euler(b.combine(x=th))]
+    second = [b.euler(b.combine(y=th)), b.euler(b.combine(y=b.m('MULTIPLY', th, -1.0))), b.euler(b.combine(z=th))]
     sel = b.m('GREATER_THAN', final, 0.5)
     for rots in (first, second):
         sw = b.node('GeometryNodeIndexSwitch', data_type='ROTATION')

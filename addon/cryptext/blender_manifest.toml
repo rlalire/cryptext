@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "cryptext"
-version = "0.2.0"
+version = "0.2.1"
 name = "Cryptext"
 tagline = "Nuage de chiffres 3D qui révèle un nombre, puis un mot en pivotant"
 maintainer = "Romain Lalire"
